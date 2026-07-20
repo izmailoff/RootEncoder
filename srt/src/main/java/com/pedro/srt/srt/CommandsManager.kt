@@ -51,6 +51,12 @@ class CommandsManager {
   var messageNumber = 1
   var MTU = Constants.MTU
   var socketId = 0
+  // The caller's OWN SRT socket id (m_iID) advertised in the handshake. Upstream 2.7.3 left this at
+  // the Handshake() default of 0 for EVERY device, so two callers looked identical to the listener
+  // (MediaMTX/libsrt) and only one could publish at a time. libsrt/ffmpeg (and iOS/HaishinKit) use a
+  // unique random id per socket; mirror that. Regenerated per connection in reset(). [tvc-srt-socketid]
+  var localSocketId = generateSocketId()
+    private set
   var startTS = 0L //microSeconds
   var audioDisabled = false
   var videoDisabled = false
@@ -86,6 +92,7 @@ class CommandsManager {
   @Throws(IOException::class)
   suspend fun writeHandshake(socket: SrtSocket?, handshake: Handshake = Handshake()) {
     writeSync.withLock {
+      handshake.srtSocketId = localSocketId   // tvc-srt-socketid: unique caller id (was left at 0)
       handshake.initialPacketSequence = sequenceNumber
       handshake.ipAddress = host
       handshake.write(getTs(), 0)
@@ -178,6 +185,7 @@ class CommandsManager {
     messageNumber = 1
     MTU = Constants.MTU
     socketId = 0
+    localSocketId = generateSocketId()   // tvc-srt-socketid: fresh unique caller id per connection
     startTS = 0L
     host = ""
     packetHandlingQueue.clear()
@@ -185,5 +193,10 @@ class CommandsManager {
 
   private fun generateInitialSequence(): Int {
     return Random.nextInt(0, Int.MAX_VALUE)
+  }
+
+  // tvc-srt-socketid: a non-zero, unique caller socket id (SRT socket ids must be non-zero).
+  private fun generateSocketId(): Int {
+    return Random.nextInt(1, Int.MAX_VALUE)
   }
 }
