@@ -65,6 +65,14 @@ public class VideoEncoder extends BaseEncoder implements GetCameraData {
   private int rotation = 90;
   private int iFrameInterval = 2;
   private long firstTimestamp = 0;
+
+  /**
+   * [tvc-sei-capture-ts] The PTS rebase base in microseconds. In SURFACE mode the MediaCodec PTS
+   * is the camera SENSOR timestamp (nanoseconds-from-boot / 1000) and every emitted
+   * bufferInfo.presentationTimeUs has this value subtracted — so the frame's absolute sensor time
+   * is presentationTimeUs + getPtsBaseUs(). 0 until the first frame is encoded.
+   */
+  public long getPtsBaseUs() { return firstTimestamp; }
   //for disable video
   private final FpsLimiter fpsLimiter = new FpsLimiter();
   private FormatVideoEncoder formatVideoEncoder = FormatVideoEncoder.YUV420Dynamical;

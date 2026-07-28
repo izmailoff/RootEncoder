@@ -592,6 +592,17 @@ abstract class StreamBase(
     }
   }
 
+  /**
+   * [tvc-sei-capture-ts] Optional transform applied to every encoded video access unit before it
+   * is recorded and streamed — e.g. inserting a capture-timestamp SEI NAL. Receives the Annex-B
+   * buffer and its BufferInfo; returns the buffer to use (the same one, or a new larger one).
+   * Runs on the encoder thread: keep it allocation-light and never block.
+   */
+  var videoDataTransformer: ((ByteBuffer, MediaCodec.BufferInfo) -> ByteBuffer)? = null
+
+  /** [tvc-sei-capture-ts] The video encoder's PTS rebase base (µs) — see VideoEncoder.getPtsBaseUs. */
+  fun getVideoPtsBaseUs(): Long = videoEncoder.ptsBaseUs
+
   private val getVideoData: GetVideoData = object : GetVideoData {
     override fun onVideoInfo(sps: ByteBuffer, pps: ByteBuffer?, vps: ByteBuffer?) {
       onVideoInfoImp(sps.duplicate(), pps?.duplicate(), vps?.duplicate())
@@ -599,8 +610,9 @@ abstract class StreamBase(
 
     override fun getVideoData(videoBuffer: ByteBuffer, info: MediaCodec.BufferInfo) {
       fpsListener.calculateFps()
-      if (!differentRecordResolution) recordController.recordVideo(videoBuffer, info)
-      getVideoDataImp(videoBuffer, info)
+      val buffer = videoDataTransformer?.invoke(videoBuffer, info) ?: videoBuffer
+      if (!differentRecordResolution) recordController.recordVideo(buffer, info)
+      getVideoDataImp(buffer, info)
     }
 
     override fun onVideoFormat(mediaFormat: MediaFormat) {
