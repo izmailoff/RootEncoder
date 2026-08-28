@@ -268,6 +268,17 @@ public class VideoEncoder extends BaseEncoder implements GetCameraData {
         formatVideoEncoder, profile, level);
   }
 
+  /**
+   * [[contract:change-video-size-on-fly]] Prepare with the stored parameters at the given size:
+   * how StreamBase puts a rung back to the configured size once the stream or record it belonged
+   * to has ended. reset(width, height) is the live-session counterpart; this one runs on a stopped
+   * encoder. Same even-value rule as the full prepareVideoEncoder.
+   */
+  public boolean prepareVideoEncoder(int width, int height) {
+    return prepareVideoEncoder(width, height, fps, bitRate, rotation, iFrameInterval,
+        formatVideoEncoder, profile, level);
+  }
+
   @RequiresApi(api = Build.VERSION_CODES.KITKAT)
   public void setVideoBitrateOnFly(int bitrate) {
     if (isRunning()) {

@@ -21,6 +21,7 @@ import com.pedro.common.AudioCodec
 import com.pedro.common.ConnectChecker
 import com.pedro.common.base.BaseSender
 import com.pedro.common.frame.MediaFrame
+import com.pedro.common.frame.VideoInfo
 import com.pedro.common.onMainThread
 import com.pedro.common.validMessage
 import com.pedro.srt.mpeg2ts.MpegTsPacket
@@ -72,7 +73,10 @@ class UdpSender(
 
   override fun setVideoInfo(sps: ByteBuffer, pps: ByteBuffer?, vps: ByteBuffer?) {
     videoPacket.setVideoCodec(commandManager.videoCodec.toCodec())
-    videoPacket.sendVideoInfo(sps, pps, vps)
+    // One generation, bound to every video frame queued from now on (BaseSender.sendMediaFrame)
+    // and the packetizer's fallback for a frame that carries none. Never written into the
+    // packetizer's live state directly: that would pair it with whatever is dequeued next.
+    videoInfo = VideoInfo(sps, pps, vps).also { videoPacket.sendVideoInfo(it) }
   }
 
   override fun setAudioInfo(sampleRate: Int, isStereo: Boolean) {

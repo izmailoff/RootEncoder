@@ -5,6 +5,7 @@ import com.pedro.common.BitrateManager
 import com.pedro.common.ConnectChecker
 import com.pedro.common.StreamBlockingQueue
 import com.pedro.common.frame.MediaFrame
+import com.pedro.common.frame.VideoInfo
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -39,13 +40,28 @@ abstract class BaseSender(
     protected val bytesSend = AtomicLong(0)
     protected val bytesSendPerSecond = AtomicLong(0)
 
+    /**
+     * [[contract:change-video-size-on-fly]] The parameter-set generation to bind to video frames.
+     * A sender that sets this from setVideoInfo gets every VIDEO frame stamped with the generation
+     * in force when it was queued, so a parameter-set change travels IN ORDER with the frames and a
+     * keyframe still queued from the previous codec goes out with the sets it was encoded against.
+     * Null (RTMP/RTSP/WHIP today): frames carry nothing and the packetizer applies its own copy at
+     * dequeue time. Written on the encoder thread, read on the same thread per codec; a restart
+     * joins the old codec thread before the new one emits, hence volatile is enough.
+     */
+    @Volatile
+    protected var videoInfo: VideoInfo? = null
+
     abstract fun setVideoInfo(sps: ByteBuffer, pps: ByteBuffer?, vps: ByteBuffer?)
     abstract fun setAudioInfo(sampleRate: Int, isStereo: Boolean)
     protected abstract suspend fun onRun()
     protected abstract suspend fun stopImp(clear: Boolean = true)
 
     fun sendMediaFrame(mediaFrame: MediaFrame) {
-        if (running && !queue.trySend(mediaFrame)) {
+        val frame = if (mediaFrame.type == MediaFrame.Type.VIDEO) {
+            videoInfo?.let { mediaFrame.copy(videoInfo = it) } ?: mediaFrame
+        } else mediaFrame
+        if (running && !queue.trySend(frame)) {
             when (mediaFrame.type) {
                 MediaFrame.Type.VIDEO -> {
                     Log.i(TAG, "Video frame discarded")

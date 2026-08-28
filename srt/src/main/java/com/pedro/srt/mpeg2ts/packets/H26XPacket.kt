@@ -18,6 +18,7 @@ package com.pedro.srt.mpeg2ts.packets
 
 import android.util.Log
 import com.pedro.common.frame.MediaFrame
+import com.pedro.common.frame.VideoInfo
 import com.pedro.common.getStartCodeSize
 import com.pedro.common.removeInfo
 import com.pedro.common.toByteArray
@@ -44,6 +45,15 @@ class H26XPacket(
 
   private val TAG = "H26XPacket"
 
+  // [[contract:change-video-size-on-fly]] Parameter sets are bound per FRAME, not per packetizer.
+  // `videoInfo` is the generation last given by sendVideoInfo and only serves a frame that carries
+  // none; a frame stamped by the sender (BaseSender.sendMediaFrame) is muxed with its own. The
+  // Annex-B copies below are the normalised form of whichever generation `loaded` points at, redone
+  // only when a frame arrives with a different one — so under a backlog at a size switch the old
+  // codec's queued keyframes keep the old SPS and the first keyframe of the new codec carries the
+  // new one, in queue order, whatever the timing of the encoder's formatChanged.
+  private var videoInfo: VideoInfo? = null
+  private var loaded: VideoInfo? = null
   private var sps: ByteArray? = null
   private var pps: ByteArray? = null
   private var vps: ByteArray? = null
@@ -59,6 +69,7 @@ class H26XPacket(
     if (length < 0) return
     val isKeyFrame = mediaFrame.info.isKeyFrame
 
+    (mediaFrame.videoInfo ?: videoInfo)?.let { load(it) }
     if (codec == Codec.HEVC) {
       val sps = this.sps
       val pps = this.pps
@@ -88,6 +99,8 @@ class H26XPacket(
 
   override fun resetPacket(resetInfo: Boolean) {
     if (resetInfo) {
+      videoInfo = null
+      loaded = null
       vps = null
       sps = null
       pps = null
@@ -100,9 +113,22 @@ class H26XPacket(
   }
 
   fun sendVideoInfo(sps: ByteBuffer, pps: ByteBuffer?, vps: ByteBuffer?) {
-    this.sps = getVideoInfoData(sps)
-    this.pps = if (pps != null) getVideoInfoData(pps) else null
-    this.vps = if (vps != null) getVideoInfoData(vps) else null
+    sendVideoInfo(VideoInfo(sps, pps, vps))
+  }
+
+  /**
+   * The generation to use for frames that carry none of their own (see [MediaFrame.videoInfo]).
+   */
+  fun sendVideoInfo(videoInfo: VideoInfo) {
+    this.videoInfo = videoInfo
+  }
+
+  private fun load(videoInfo: VideoInfo) {
+    if (videoInfo === loaded) return
+    sps = getVideoInfoData(videoInfo.sps)
+    pps = videoInfo.pps?.let { getVideoInfoData(it) }
+    vps = videoInfo.vps?.let { getVideoInfoData(it) }
+    loaded = videoInfo
   }
 
   /**
@@ -148,16 +174,12 @@ class H26XPacket(
     }
   }
 
-  private fun getVideoInfoData(byteBuffer: ByteBuffer): ByteArray {
-    byteBuffer.rewind()
-    val startCodeSize = byteBuffer.getStartCodeSize()
+  private fun getVideoInfoData(bytes: ByteArray): ByteArray {
+    val startCodeSize = ByteBuffer.wrap(bytes).getStartCodeSize()
     return if (startCodeSize == 0) { //make sure video info start with prefix
-      val validBuffer = ByteBuffer.allocate(byteBuffer.remaining() + 4)
-      validBuffer.putInt(0x00000001)
-      validBuffer.put(byteBuffer)
-      validBuffer.toByteArray()
+      byteArrayOf(0x00, 0x00, 0x00, 0x01).plus(bytes)
     } else {
-      byteBuffer.toByteArray()
+      bytes
     }
   }
 

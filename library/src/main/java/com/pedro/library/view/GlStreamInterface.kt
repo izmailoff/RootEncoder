@@ -165,6 +165,29 @@ class GlStreamInterface(private val context: Context): OnFrameAvailableListener,
     }
   }
 
+  /**
+   * [[contract:change-video-size-on-fly]] Detach the stream codec surface AND move the render
+   * target to the size of the codec that replaces it, as ONE step on the render thread. draw()
+   * runs on the same single-thread executor, so a draw already queued ahead still paints the old
+   * viewport into the old surface, and nothing can paint the new viewport into the old surface
+   * (one quarter-size frame at the tail of the old rung, a visible pop on the wall) or the old
+   * viewport into the new one. setEncoderSize alone writes the fields from the caller's thread,
+   * which is fine before start (prepareVideo) but not under a live encoder surface.
+   */
+  fun removeMediaCodecSurface(newEncoderWidth: Int, newEncoderHeight: Int) {
+    val executor = this.executor
+    if (executor == null) {
+      // Not rendering: no draw can race the write, and nothing queues it otherwise.
+      setEncoderSize(newEncoderWidth, newEncoderHeight)
+      return
+    }
+    executor.submit {
+      surfaceManagerEncoder.release()
+      encoderWidth = newEncoderWidth
+      encoderHeight = newEncoderHeight
+    }
+  }
+
   override fun addMediaCodecRecordSurface(surface: Surface) {
     executor?.submit {
       if (surfaceManager.isReady) {

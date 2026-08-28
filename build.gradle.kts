@@ -4,7 +4,7 @@ allprojects {
   // the app already depends on and mavenLocal() can stand in for JitPack before its build exists.
   // Upstream sets "com.github.pedroSG94" and lets JitPack rewrite it. The version is the git tag.
   group = "com.github.izmailoff.RootEncoder"
-  version = "2.8.0-tvcsrt4"
+  version = "2.8.0-tvcsrt5"
 
   plugins.withType<PublishingPlugin> {
     configure<com.android.build.api.dsl.LibraryExtension> {

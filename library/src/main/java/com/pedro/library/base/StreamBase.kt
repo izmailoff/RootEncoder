@@ -21,6 +21,7 @@ import android.graphics.SurfaceTexture
 import android.media.MediaCodec
 import android.media.MediaFormat
 import android.os.Build
+import android.util.Log
 import android.util.Size
 import android.view.Surface
 import android.view.SurfaceView
@@ -70,6 +71,7 @@ abstract class StreamBase(
     aSource: AudioSource
 ) {
 
+  private val TAG = "StreamBase"
   private val getMicrophoneData = object: GetMicrophoneData {
     override fun inputPCMData(frame: Frame) {
       audioEncoder.inputPCMData(frame)
@@ -95,6 +97,15 @@ abstract class StreamBase(
   var audioSource: AudioSource = aSource
     private set
   private var differentRecordResolution = false
+  // [[contract:change-video-size-on-fly]] The size given to prepareVideo, landscape-oriented as
+  // given. videoEncoder.width/height are the CURRENT encode size, which after a rung change is the
+  // rung, so anything that must follow the configured size reads these instead: the camera init in
+  // changeVideoSource (re-initialising capture at the rung would leave the step back up upscaling
+  // a small capture for the rest of the broadcast) and the size the encoder is re-prepared at when
+  // the stream or record ends, so a rung never leaks into the next session.
+  private var configuredWidth = 0
+  private var configuredHeight = 0
+  private var encoderErrorCallback: CodecErrorCallback? = null
   private val previewCallback = PreviewCallback(
     onCreated = { surface, width, height -> if (!isOnPreview) startPreview(surface, width, height) },
     onChanged = { width, height -> getGlInterface().setPreviewResolution(width, height) },
@@ -131,6 +142,8 @@ abstract class StreamBase(
     }
     val videoResult = videoSource.init(max(width, recordWidth), max(height, recordHeight), fps, rotation)
     if (videoResult) {
+      configuredWidth = width
+      configuredHeight = height
       if (differentRecordResolution) {
         //using different record resolution
         if (rotation == 90 || rotation == 270) glInterface.setEncoderRecordSize(recordHeight, recordWidth)
@@ -224,13 +237,32 @@ abstract class StreamBase(
    * the GL pipeline just redraws its render target into a smaller codec surface, and the preview
    * and any separate-resolution record encoder are untouched. Under the hood this is the same
    * stop/configure/start of MediaCodec that resetVideoEncoder already does for codec errors, run
-   * under the LIVE socket: the socket, the sender queue and the TS muxer never see it, the PTS
-   * base survives the restart, and the new SPS/PPS arrive through the existing onVideoInfo path
-   * and are prepended to the next keyframe. Budget ~100–300 ms without frames per switch, which is
-   * why this is a rung with hysteresis and not a per-second knob.
+   * under the LIVE socket: the socket, the sender queue and the TS muxer never see it, and the PTS
+   * base survives the restart. The new SPS/PPS arrive through the existing onVideoInfo path and
+   * are BOUND to the frames queued from then on (BaseSender.sendMediaFrame / H26XPacket), so a
+   * keyframe of the old size still waiting in the sender queue — a rung-down fires under
+   * congestion, i.e. with a backlog — keeps the sets it was encoded against and the first keyframe
+   * of the new codec carries the new ones, in queue order. The render-target resize is queued on
+   * the GL thread behind the old codec surface's detach, so no frame is drawn with one size's
+   * viewport into the other's surface.
+   *
+   * Verified on the SRT/UDP (MPEG-TS) clients, which re-signal parameter sets in-band on every
+   * keyframe. RTMP keeps the width/height metadata sent at connect and RTSP's SDP
+   * sprop-parameter-sets go stale after a switch; do not rely on it there without checking the
+   * receiver.
+   *
+   * SYNCHRONOUS: the call returns only after the old codec has been stopped (BaseEncoder.stop
+   * joins its thread, up to 500 ms) and the new one configured — budget ~100–800 ms, during which
+   * no frames are produced. Call it from a worker, not from the bitrate callback (RootEncoder
+   * delivers onNewBitrate on the main thread), and serialise it with resetVideoEncoder: the
+   * encoder fields are not guarded against a concurrent reset from the codec thread. This is why
+   * the rung has hysteresis and is not a per-second knob.
    *
    * Takes the same landscape-oriented width/height as prepareVideo and applies the same portrait
-   * swap. The bitrate last set by setVideoBitrateOnFly carries over.
+   * swap. The bitrate last set by setVideoBitrateOnFly carries over. The rung lives for the
+   * session it was made in: when the stream (or record) ends the encoder is re-prepared at the
+   * size given to prepareVideo, and changeVideoSource always initialises the new source at that
+   * size, never at the rung.
    *
    * Refused (returns false, nothing changes) when neither streaming nor recording, when the size
    * is unchanged, when width/height are not positive even values, and — deliberately — while a
@@ -238,7 +270,11 @@ abstract class StreamBase(
    * added with the original SPS and MediaMuxer cannot take a new one mid-file, so the file would
    * stop decoding at the switch. Stop the record, or record at its own resolution, before
    * changing rungs. If the codec refuses the new size the old one is restored so the stream
-   * survives, and false is returned.
+   * survives, and false is returned. If the old size ALSO fails to come back, the stream has no
+   * video encoder: that is reported the way an encoder crash is — through the CodecErrorCallback
+   * set with setEncoderErrorCallback (onEncodeError, VIDEO_CODEC), whose answer decides one more
+   * reset attempt, as BaseEncoder does — and still returns false. An app that treats every false
+   * as "stay put" must set that callback to tell the two apart.
    *
    * @return true if the stream encoder was restarted at the new size
    */
@@ -252,16 +288,28 @@ abstract class StreamBase(
     if (resetVideoEncoderWithSize(width, height)) return true
     // The codec refused the new size (or the restart failed). A refused rung is a policy
     // problem, not a reason to drop the broadcast: go back to the size that was working.
-    resetVideoEncoderWithSize(oldWidth, oldHeight)
+    if (resetVideoEncoderWithSize(oldWidth, oldHeight)) return false
+    // Both sizes refused (e.g. codec-pool exhaustion right after a release): there is no video
+    // encoder running now. That is a codec failure, not a refused rung, and a bare false would
+    // hide it behind "nothing changed" — report it on the channel an encoder crash uses and honour
+    // its answer, exactly as BaseEncoder.reloadCodec does.
+    val error = IllegalStateException(
+      "video encoder lost: ${width}x${height} refused and ${oldWidth}x${oldHeight} could not be restored"
+    )
+    Log.e(TAG, error.message, error)
+    val shouldReset = encoderErrorCallback?.onEncodeError(CodecUtil.CodecTypeError.VIDEO_CODEC, error) ?: true
+    if (shouldReset) resetStreamVideoEncoder { videoEncoder.reset() }
     return false
   }
 
   private fun resetVideoEncoderWithSize(width: Int, height: Int): Boolean {
     // Same swap as prepareVideo: in portrait both the codec and the GL target take height x width.
     val rotation = videoEncoder.rotation
-    if (rotation == 90 || rotation == 270) glInterface.setEncoderSize(height, width)
-    else glInterface.setEncoderSize(width, height)
-    return resetStreamVideoEncoder { videoEncoder.reset(width, height) }
+    val portrait = rotation == 90 || rotation == 270
+    return resetStreamVideoEncoder(
+      glWidth = if (portrait) height else width,
+      glHeight = if (portrait) width else height
+    ) { videoEncoder.reset(width, height) }
   }
 
   /**
@@ -453,8 +501,9 @@ abstract class StreamBase(
     val wasRunning = videoSource.isRunning()
     val wasCreated = videoSource.created
     if (wasCreated) {
-      var width = videoEncoder.width
-      var height = videoEncoder.height
+      // The configured size, not videoEncoder.width/height: those are the current rung.
+      var width = configuredWidth
+      var height = configuredHeight
       if (differentRecordResolution) {
         width = max(width, videoEncoderRecord.width)
         height = max(height, videoEncoderRecord.height)
@@ -501,6 +550,7 @@ abstract class StreamBase(
    * @param encoderErrorCallback callback to use, null to remove
    */
   fun setEncoderErrorCallback(encoderErrorCallback: CodecErrorCallback?) {
+    this.encoderErrorCallback = encoderErrorCallback
     videoEncoder.setEncoderErrorCallback(encoderErrorCallback)
     videoEncoderRecord.setEncoderErrorCallback(encoderErrorCallback)
     audioEncoder.setEncoderErrorCallback(encoderErrorCallback)
@@ -555,6 +605,7 @@ abstract class StreamBase(
     return glInterface.surfaceTexture
   }
 
+  /** The CURRENT encode size — the rung while changeVideoSizeOnFly has one in force. */
   protected fun getVideoResolution() = Size(videoEncoder.width, videoEncoder.height)
 
   protected fun getVideoFps() = videoEncoder.fps
@@ -617,10 +668,13 @@ abstract class StreamBase(
   /**
    * Restart the stream encoder under the GL pipeline: detach its codec surface, run [reset] (which
    * releases the old input surface and creates a new one), attach the new surface. Shared by
-   * resetVideoEncoder and changeVideoSizeOnFly so the two cannot drift.
+   * resetVideoEncoder and changeVideoSizeOnFly so the two cannot drift. A size change passes the
+   * new GL target size so it is applied on the render thread together with the detach, behind any
+   * draw already queued for the old surface.
    */
-  private fun resetStreamVideoEncoder(reset: () -> Boolean): Boolean {
-    glInterface.removeMediaCodecSurface()
+  private fun resetStreamVideoEncoder(glWidth: Int = 0, glHeight: Int = 0, reset: () -> Boolean): Boolean {
+    if (glWidth > 0 && glHeight > 0) glInterface.removeMediaCodecSurface(glWidth, glHeight)
+    else glInterface.removeMediaCodecSurface()
     if (!reset()) return false
     glInterface.addMediaCodecSurface(videoEncoder.inputSurface)
     return true
@@ -638,7 +692,17 @@ abstract class StreamBase(
       val result = videoEncoderRecord.prepareVideoEncoder()
       if (!result) return false
     }
-    return videoEncoder.prepareVideoEncoder() && audioEncoder.prepareAudioEncoder()
+    // A rung left by changeVideoSizeOnFly ends with the session it was made in: the encoder and
+    // the GL target go back to the prepareVideo size, which is what the app's rung policy assumes
+    // the next stream starts at. The codec surface is already detached (stopSources), so the GL
+    // size can be written directly.
+    val videoResult = if (configuredWidth > 0) {
+      val rotation = videoEncoder.rotation
+      if (rotation == 90 || rotation == 270) glInterface.setEncoderSize(configuredHeight, configuredWidth)
+      else glInterface.setEncoderSize(configuredWidth, configuredHeight)
+      videoEncoder.prepareVideoEncoder(configuredWidth, configuredHeight)
+    } else videoEncoder.prepareVideoEncoder()
+    return videoResult && audioEncoder.prepareAudioEncoder()
   }
 
   private val getAacData: GetAudioData = object : GetAudioData {
