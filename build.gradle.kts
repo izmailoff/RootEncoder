@@ -1,6 +1,10 @@
 allprojects {
-  group = "com.github.pedroSG94"
-  version = "2.8.0"
+  // TVC fork: the group matches the coordinates JitPack publishes the fork under
+  // (com.github.<user>.<repo>), so a `publishToMavenLocal` lands at exactly the group:artifact:version
+  // the app already depends on and mavenLocal() can stand in for JitPack before its build exists.
+  // Upstream sets "com.github.pedroSG94" and lets JitPack rewrite it. The version is the git tag.
+  group = "com.github.izmailoff.RootEncoder"
+  version = "2.8.0-tvcsrt4"
 
   plugins.withType<PublishingPlugin> {
     configure<com.android.build.api.dsl.LibraryExtension> {

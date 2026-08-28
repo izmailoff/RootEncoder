@@ -10,7 +10,9 @@ android {
     applicationId = "com.pedro.streamer"
     minSdk = 16
     targetSdk = 37
-    versionCode = project.version.toString().replace(".", "").toInt()
+    // TVC fork: the version carries a "-tvcsrtN" tag suffix; the demo app's code only needs the
+    // numeric core (2.8.0 → 280), so drop the suffix before parsing rather than fail the build.
+    versionCode = project.version.toString().substringBefore("-").replace(".", "").toInt()
     versionName = project.version.toString()
     multiDexEnabled = true
   }
