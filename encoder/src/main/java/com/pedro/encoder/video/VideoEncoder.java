@@ -234,6 +234,21 @@ public class VideoEncoder extends BaseEncoder implements GetCameraData {
     return true;
   }
 
+  /**
+   * [[contract:change-video-size-on-fly]] reset() at a new encode size, keeping every other stored
+   * parameter — fps, rotation, iFrameInterval, format, profile, level, and the bitRate last set by
+   * setVideoBitrateOnFly, which is the adaptive controller's current target and must carry across.
+   * MediaCodec cannot change resolution in place, so a size change IS a codec restart; this is the
+   * same stop(false)/prepare/restart as reset(), so the PTS base survives and the timeline
+   * continues, and the new SPS/PPS reach GetVideoData.onVideoInfo through formatChanged like any
+   * other restart. Same even-value rule as prepareVideoEncoder (it throws on odd values).
+   */
+  public boolean reset(int width, int height) {
+    this.width = width;
+    this.height = height;
+    return reset();
+  }
+
   private FormatVideoEncoder chooseColorDynamically(MediaCodecInfo mediaCodecInfo) {
     for (int color : mediaCodecInfo.getCapabilitiesForType(type).colorFormats) {
       if (color == FormatVideoEncoder.YUV420PLANAR.getFormatCodec()) {

@@ -213,6 +213,58 @@ abstract class StreamBase(
   }
 
   /**
+   * [[contract:change-video-size-on-fly]] Change the encoded video size while streaming, without
+   * dropping the connection. This is the adaptive-resolution rung: once the bitrate controller has
+   * pushed its target below what the current size carries cleanly, the app steps the ENCODE size
+   * down (1080 → 720 → 540/480 → 360) so the bits buy fewer, better pixels instead of blockier
+   * ones, and steps back up when the link recovers — the trade Haivision's SST makes, and one
+   * neither `prepareVideo` (refuses while streaming) nor MediaCodec (no in-place resize) allowed.
+   *
+   * Only the stream encoder changes. The camera keeps capturing at the size given to prepareVideo,
+   * the GL pipeline just redraws its render target into a smaller codec surface, and the preview
+   * and any separate-resolution record encoder are untouched. Under the hood this is the same
+   * stop/configure/start of MediaCodec that resetVideoEncoder already does for codec errors, run
+   * under the LIVE socket: the socket, the sender queue and the TS muxer never see it, the PTS
+   * base survives the restart, and the new SPS/PPS arrive through the existing onVideoInfo path
+   * and are prepended to the next keyframe. Budget ~100–300 ms without frames per switch, which is
+   * why this is a rung with hysteresis and not a per-second knob.
+   *
+   * Takes the same landscape-oriented width/height as prepareVideo and applies the same portrait
+   * swap. The bitrate last set by setVideoBitrateOnFly carries over.
+   *
+   * Refused (returns false, nothing changes) when neither streaming nor recording, when the size
+   * is unchanged, when width/height are not positive even values, and — deliberately — while a
+   * record shares this encoder (no separate record resolution in prepareVideo): the MP4 track was
+   * added with the original SPS and MediaMuxer cannot take a new one mid-file, so the file would
+   * stop decoding at the switch. Stop the record, or record at its own resolution, before
+   * changing rungs. If the codec refuses the new size the old one is restored so the stream
+   * survives, and false is returned.
+   *
+   * @return true if the stream encoder was restarted at the new size
+   */
+  fun changeVideoSizeOnFly(width: Int, height: Int): Boolean {
+    if (!isStreaming && !isRecording) return false
+    if (isRecording && !differentRecordResolution) return false
+    if (width <= 0 || height <= 0 || width % 2 != 0 || height % 2 != 0) return false
+    val oldWidth = videoEncoder.width
+    val oldHeight = videoEncoder.height
+    if (width == oldWidth && height == oldHeight) return false
+    if (resetVideoEncoderWithSize(width, height)) return true
+    // The codec refused the new size (or the restart failed). A refused rung is a policy
+    // problem, not a reason to drop the broadcast: go back to the size that was working.
+    resetVideoEncoderWithSize(oldWidth, oldHeight)
+    return false
+  }
+
+  private fun resetVideoEncoderWithSize(width: Int, height: Int): Boolean {
+    // Same swap as prepareVideo: in portrait both the codec and the GL target take height x width.
+    val rotation = videoEncoder.rotation
+    if (rotation == 90 || rotation == 270) glInterface.setEncoderSize(height, width)
+    else glInterface.setEncoderSize(width, height)
+    return resetStreamVideoEncoder { videoEncoder.reset(width, height) }
+  }
+
+  /**
    * Force stream to work with fps selected in prepareVideo method. Must be called before prepareVideo.
    * Must be called after prepareVideo
    *
@@ -559,9 +611,17 @@ abstract class StreamBase(
       if (!result) return false
       glInterface.addMediaCodecRecordSurface(videoEncoderRecord.inputSurface)
     }
+    return resetStreamVideoEncoder { videoEncoder.reset() }
+  }
+
+  /**
+   * Restart the stream encoder under the GL pipeline: detach its codec surface, run [reset] (which
+   * releases the old input surface and creates a new one), attach the new surface. Shared by
+   * resetVideoEncoder and changeVideoSizeOnFly so the two cannot drift.
+   */
+  private fun resetStreamVideoEncoder(reset: () -> Boolean): Boolean {
     glInterface.removeMediaCodecSurface()
-    val result = videoEncoder.reset()
-    if (!result) return false
+    if (!reset()) return false
     glInterface.addMediaCodecSurface(videoEncoder.inputSurface)
     return true
   }
