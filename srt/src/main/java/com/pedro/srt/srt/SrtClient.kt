@@ -105,6 +105,11 @@ class SrtClient(private val connectChecker: ConnectChecker) {
     private set
   var packetsLost = 0
     private set
+  // TVC fork [[contract:srt-link-stats]]: the receiver's own view, from full ACKs.
+  @Volatile private var peerReceiveRateBps = 0L
+  @Volatile private var peerPacketRate = 0
+  @Volatile private var peerLinkCapacity = 0
+  @Volatile private var ackReports = 0L
   var socketType = SocketType.JAVA
   var socketTimeout = StreamSocket.DEFAULT_TIMEOUT
 
@@ -309,6 +314,10 @@ class SrtClient(private val connectChecker: ConnectChecker) {
     commandsManager.reset()
     rtt = 0
     packetsLost = 0
+    peerReceiveRateBps = 0L
+    peerPacketRate = 0
+    peerLinkCapacity = 0
+    ackReports = 0L
     job?.cancelAndJoin()
     job = null
     scope.cancel()
@@ -383,6 +392,11 @@ class SrtClient(private val connectChecker: ConnectChecker) {
             commandsManager.updateHandlingQueue(lastPacketSequence)
             if (ackSequence != 0) {
               rtt = srtPacket.rtt
+              // A full ACK carries the receiver's measured rates (a light ACK does not).
+              peerReceiveRateBps = srtPacket.receivingRate.toLong() * 8
+              peerPacketRate = srtPacket.packetReceivingRate
+              peerLinkCapacity = srtPacket.estimatedLinkCapacity
+              ackReports++
               commandsManager.writeAck2(ackSequence, socket)
             }
           }
@@ -390,7 +404,8 @@ class SrtClient(private val connectChecker: ConnectChecker) {
             //packet lost reported, we should resend it
             val lostRanges = srtPacket.getNakRanges()
             this.packetsLost += srtPacket.getLostCount()
-            commandsManager.reSendPackets(lostRanges, socket)
+            // Space repeats of the same packet by one RTT (floor 20 ms) — see reSendPackets.
+            commandsManager.reSendPackets(lostRanges, socket, maxOf(rtt.toLong(), 20_000L))
           }
           is CongestionWarning -> {
 
@@ -439,6 +454,18 @@ class SrtClient(private val connectChecker: ConnectChecker) {
   }
 
   @Throws(IllegalArgumentException::class)
+  /** TVC fork [[contract:srt-link-stats]] — see [SrtLinkStats]. */
+  fun getLinkStats(): SrtLinkStats = SrtLinkStats(
+    rttUs = rtt,
+    packetsSent = commandsManager.packetsSent,
+    packetsRetransmitted = commandsManager.packetsRetransmitted,
+    packetsLost = packetsLost.toLong(),
+    peerReceiveRateBps = peerReceiveRateBps,
+    peerPacketRate = peerPacketRate,
+    peerLinkCapacity = peerLinkCapacity,
+    ackReports = ackReports,
+  )
+
   fun hasCongestion(): Boolean {
     return hasCongestion(20f)
   }

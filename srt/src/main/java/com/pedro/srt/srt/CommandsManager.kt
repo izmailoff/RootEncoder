@@ -63,6 +63,11 @@ class CommandsManager {
   private var encryptor: EncryptionUtil? = null
   var videoCodec = VideoCodec.H264
   var audioCodec = AudioCodec.AAC
+  /** TVC fork [[contract:srt-link-stats]]: unique data packets written / packets re-sent for a NAK. */
+  @Volatile var packetsSent = 0L
+    private set
+  @Volatile var packetsRetransmitted = 0L
+    private set
 
   fun setPassphrase(passphrase: String, type: EncryptionType) {
     encryptor = if (passphrase.isEmpty() || type == EncryptionType.NONE) null else EncryptionUtil(type, passphrase)
@@ -99,16 +104,29 @@ class CommandsManager {
     }
   }
 
+  /**
+   * TVC fork: skip (a bounded number of) packets that are not a handshake. A reconnect under
+   * congestion can find the peer's ACK/NAK/keep-alive for the connection being replaced still in
+   * flight, and failing the whole reconnect on the first of them ("unexpected response type: Ack",
+   * seen on the emulator 2026-09-26) turns one lost handshake into a retry loop.
+   */
   @Throws(IOException::class)
   suspend fun readHandshake(socket: SrtSocket?): Handshake {
-    val handshakeBuffer = socket?.readBuffer() ?: throw IOException("read buffer failed, socket disconnected")
-    val handshake = SrtPacket.getSrtPacket(handshakeBuffer)
-    if (handshake is Handshake) {
-      Log.i(TAG, handshake.toString())
-      return handshake
-    } else {
-      throw IOException("unexpected response type: ${handshake.javaClass.name}")
+    var last: SrtPacket? = null
+    repeat(MAX_STRAY_PACKETS) {
+      val handshakeBuffer = socket?.readBuffer() ?: throw IOException("read buffer failed, socket disconnected")
+      val packet = SrtPacket.getSrtPacket(handshakeBuffer)
+      if (packet is Handshake) {
+        Log.i(TAG, packet.toString())
+        return packet
+      }
+      last = packet
     }
+    throw IOException("unexpected response type: ${last?.javaClass?.name}")
+  }
+
+  private companion object {
+    const val MAX_STRAY_PACKETS = 32
   }
 
   @Throws(IOException::class)
@@ -128,23 +146,36 @@ class CommandsManager {
       packetHandlingQueue.add(dataPacket)
       dropTooLatePackets(dataPacket.ts)
       dataPacket.write()
+      dataPacket.lastSentUs = TimeUtils.getCurrentTimeMicro()
       socket?.write(dataPacket)
+      packetsSent++
       return dataPacket.getSize()
     }
   }
 
+  /**
+   * TVC fork [[contract:srt-link-stats]]: a packet already RE-sent within [minIntervalUs] is NOT
+   * sent again (the first retransmission always goes: the NAK that asks for it arrives about one RTT
+   * after the original send, which a plain interval would have swallowed). Receivers repeat their loss list in periodic NAKs (every ~RTT/2 or 20 ms), and the
+   * stock loop answered every repeat with another copy — under congestion that multiplied the load on
+   * the very link that was dropping, so the repair traffic itself kept the link saturated. libsrt
+   * spaces retransmissions the same way. [minIntervalUs] = 0 keeps the stock behaviour.
+   */
   @Throws(IOException::class)
-  suspend fun reSendPackets(lostRanges: List<Pair<Int, Int>>, socket: SrtSocket?) {
+  suspend fun reSendPackets(lostRanges: List<Pair<Int, Int>>, socket: SrtSocket?, minIntervalUs: Long = 0L) {
     writeSync.withLock {
+      val now = TimeUtils.getCurrentTimeMicro()
       val dataPackets = packetHandlingQueue.filter { packet ->
         lostRanges.any { (min, max) ->
           ((packet.sequenceNumber - min) and 0x7FFFFFFF) <= ((max - min) and 0x7FFFFFFF)
-        }
+        } && (!packet.retransmitted || now - packet.lastSentUs >= minIntervalUs)
       }
       dataPackets.forEach { packet ->
         packet.retransmitted = true
         packet.write()
+        packet.lastSentUs = now
         socket?.write(packet)
+        packetsRetransmitted++
       }
     }
   }
@@ -200,6 +231,8 @@ class CommandsManager {
     startTS = 0L
     host = ""
     packetHandlingQueue.clear()
+    packetsSent = 0L
+    packetsRetransmitted = 0L
   }
 
   private fun generateInitialSequence(): Int {

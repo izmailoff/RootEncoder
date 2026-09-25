@@ -41,6 +41,9 @@ class DataPacket(
   var payload: ByteArray = byteArrayOf()
 ): SrtPacket() {
 
+  /** TVC fork: when this packet last went on the wire (µs, CommandsManager clock) — see reSendPackets. */
+  var lastSentUs: Long = 0L
+
   fun write() {
     resetBuffer()
     val headerData = (PacketType.DATA.value shl 31) or (sequenceNumber and 0x7FFFFFFF)

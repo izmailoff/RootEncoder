@@ -231,6 +231,13 @@ class GenericStreamClient(
     udpClient.setOnlyVideo(onlyVideo)
   }
 
+  /**
+   * TVC fork [[contract:srt-link-stats]]: the receiver's view of the link while publishing SRT,
+   * null on any other protocol.
+   */
+  fun getSrtLinkStats(): com.pedro.srt.srt.SrtLinkStats? =
+    if (connectedStreamClient === srtClient) srtClient.getLinkStats() else null
+
   fun connecting(url: String) {
     connectedStreamClient =
       if (url.startsWith("rtmp", ignoreCase = true)) {
