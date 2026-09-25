@@ -105,15 +105,17 @@ class CommandsManager {
   }
 
   /**
-   * TVC fork: skip (a bounded number of) packets that are not a handshake. A reconnect under
-   * congestion can find the peer's ACK/NAK/keep-alive for the connection being replaced still in
-   * flight, and failing the whole reconnect on the first of them ("unexpected response type: Ack",
-   * seen on the emulator 2026-09-26) turns one lost handshake into a retry loop.
+   * TVC fork: skip packets that are not a handshake, for up to [STRAY_WINDOW_MS]. A reconnect finds
+   * the peer still ACKing the connection being replaced (the local port is reused, and the server
+   * keeps that session until its own idle timeout — ~100 ACKs a second), and failing the whole
+   * reconnect on the first of them ("unexpected response type: Ack", seen on the emulator
+   * 2026-09-26) turned one lost handshake into a 10-second retry loop.
    */
   @Throws(IOException::class)
   suspend fun readHandshake(socket: SrtSocket?): Handshake {
     var last: SrtPacket? = null
-    repeat(MAX_STRAY_PACKETS) {
+    val deadline = TimeUtils.getCurrentTimeMillis() + STRAY_WINDOW_MS
+    do {
       val handshakeBuffer = socket?.readBuffer() ?: throw IOException("read buffer failed, socket disconnected")
       val packet = SrtPacket.getSrtPacket(handshakeBuffer)
       if (packet is Handshake) {
@@ -121,12 +123,12 @@ class CommandsManager {
         return packet
       }
       last = packet
-    }
+    } while (TimeUtils.getCurrentTimeMillis() < deadline)
     throw IOException("unexpected response type: ${last?.javaClass?.name}")
   }
 
   private companion object {
-    const val MAX_STRAY_PACKETS = 32
+    const val STRAY_WINDOW_MS = 5_000L
   }
 
   @Throws(IOException::class)

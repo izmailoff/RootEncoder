@@ -76,6 +76,12 @@ abstract class BaseSender(
     }
 
     fun start() {
+        // TVC fork: a start without a stop (a reconnect whose earlier attempt got as far as starting
+        // the sender) used to leave the previous job running beside the new one — two send loops
+        // draining one queue, and two bitrate tasks each reporting on the ~1 s tick, one of them the
+        // sum (seen on the emulator 2026-09-26 as onNewBitrate firing twice a second at 2x the rate,
+        // which the app's ABR read as extra ticks). One sender, one job.
+        job?.cancel()
         bitrateManager.reset()
         queue.clear()
         running = true
