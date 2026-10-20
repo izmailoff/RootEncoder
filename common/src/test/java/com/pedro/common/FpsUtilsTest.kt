@@ -61,4 +61,17 @@ class FpsUtilsTest {
             ))
         assertTrue(result contentEquals intArrayOf(60, 60))
     }
+
+    @Test
+    fun fixedRangePreferredOverWiderAeRange() {
+        val r = FpsUtils.fixedFpsRange(30, listOf(intArrayOf(15, 30), intArrayOf(24, 30), intArrayOf(30, 30), intArrayOf(7, 60)))
+        assertTrue(r contentEquals intArrayOf(30, 30))
+    }
+
+    @Test
+    fun fixedRangeFallsBackToNarrowestContaining() {
+        val r = FpsUtils.fixedFpsRange(25, listOf(intArrayOf(15, 30), intArrayOf(24, 30), intArrayOf(20, 30), intArrayOf(30, 30)))
+        assertTrue(r contentEquals intArrayOf(24, 30))
+        assertTrue(FpsUtils.fixedFpsRange(50, listOf(intArrayOf(15, 30))) == null)
+    }
 }

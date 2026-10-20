@@ -163,6 +163,7 @@ abstract class StreamBase(
       val result = videoEncoder.prepareVideoEncoder(width, height, fps, bitrate, rotation,
         iFrameInterval, FormatVideoEncoder.SURFACE, profile, level)
       forceFpsLimit(true)
+      glInterface.setSourceFrameRate(fps)
       return result
     }
     return false

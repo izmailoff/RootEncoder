@@ -15,6 +15,7 @@
  */
 package com.pedro.encoder.input.video
 
+import com.pedro.common.FpsUtils
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Rect
@@ -204,8 +205,25 @@ class Camera2ApiManager(context: Context) : CameraDevice.StateCallback() {
         return builderInputSurface.build()
     }
 
+    /** The AE target fps range last applied (for diagnostics), null before the first request. */
+    var appliedFpsRange: Range<Int>? = null
+        private set
+
     private fun adaptFpsRange(expectedFps: Int, builderInputSurface: CaptureRequest.Builder) {
         val fpsRanges = getSupportedFps(null, facing)
+        // TVC fork: constant frame rate first — a [15,30]-style range lets AE drop the rate in dim
+        // light, the sensor timestamps go uneven and LL-HLS parts flip 7<->8 frames (iOS error).
+        val usable = fpsRanges.filterNot { CameraHelper.discardCamera2Fps(it, facing) }
+        val fixed = FpsUtils.fixedFpsRange(expectedFps, usable.map { intArrayOf(it.lower, it.upper) })
+        if (fixed != null) {
+            val range = Range(fixed[0], fixed[1])
+            Log.i(TAG, "fps: AE target range $range for $expectedFps fps (" +
+                (if (fixed[0] == fixed[1]) "fixed" else "narrowest containing; no [$expectedFps,$expectedFps] listed") +
+                ") of ${fpsRanges.joinToString()}")
+            builderInputSurface.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, range)
+            appliedFpsRange = range
+            return
+        }
         if (fpsRanges.isNotEmpty()) {
             var closestRange = fpsRanges[0]
             var measure = (abs((closestRange.lower - expectedFps).toDouble()) + abs(
@@ -226,8 +244,9 @@ class Camera2ApiManager(context: Context) : CameraDevice.StateCallback() {
                     }
                 }
             }
-            Log.i(TAG, "fps: " + closestRange.lower + " - " + closestRange.upper)
+            Log.i(TAG, "fps: no range contains $expectedFps; using " + closestRange.lower + " - " + closestRange.upper)
             builderInputSurface.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, closestRange)
+            appliedFpsRange = closestRange
         }
     }
 
@@ -256,6 +275,7 @@ class Camera2ApiManager(context: Context) : CameraDevice.StateCallback() {
             Log.e(TAG, "Error finding dynamic FPS range", e)
         }
         builderInputSurface.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, bestRange)
+        appliedFpsRange = bestRange
     }
 
     fun setCustomRequest(request: (CaptureRequest.Builder) -> Unit): Boolean {

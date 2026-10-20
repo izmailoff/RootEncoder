@@ -189,8 +189,13 @@ public class Camera1ApiManager implements Camera.PreviewCallback, Camera.FaceDet
       Camera.Parameters parameters = camera.getParameters();
       parameters.setPreviewSize(width, height);
       parameters.setPreviewFormat(imageFormat);
-      int[] range = FpsUtils.INSTANCE.adaptFpsRange(fps, parameters.getSupportedPreviewFpsRange());
-      Log.i(TAG, "fps: " + range[0] + " - " + range[1]);
+      List<int[]> previewRanges = parameters.getSupportedPreviewFpsRange();
+      // TVC fork: Camera1 lists ranges x1000; prefer a fixed [N,N] (constant frame rate) when listed.
+      int scale = 1;
+      for (int[] r : previewRanges) if (r[1] >= 1000) { scale = 1000; break; }
+      int[] range = FpsUtils.INSTANCE.fixedFpsRange(fps * scale, previewRanges);
+      if (range == null) range = FpsUtils.INSTANCE.adaptFpsRange(fps, previewRanges);
+      Log.i(TAG, "fps: " + range[0] + " - " + range[1] + " for " + fps + " fps");
       parameters.setPreviewFpsRange(range[0], range[1]);
 
       List<String> supportedFocusModes = parameters.getSupportedFocusModes();

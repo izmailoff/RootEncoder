@@ -302,6 +302,7 @@ class GlStreamInterface(private val context: Context): OnFrameAvailableListener,
     val timestamp = frameTimestampMapper.map(
       if (mainRender.isReady()) mainRender.getSurfaceTexture().timestamp else 0L,
       TimeUtils.getCurrentTimeNano())
+  frameTimestampMapper.pollStats(TimeUtils.getCurrentTimeNano())?.let { android.util.Log.i("FrameTimestampMapper", it) }
 
     val orientation = when (orientationForced) {
       OrientationForced.PORTRAIT -> true
@@ -568,6 +569,16 @@ class GlStreamInterface(private val context: Context): OnFrameAvailableListener,
 
   override fun forceFpsLimit(fps: Int) {
     fpsLimiter.setFPS(fps)
+  }
+
+  /**
+   * TVC fork: the source's nominal frame rate (the prepared encoder fps). Frame PTS are snapped to a
+   * constant-frame-rate grid at this rate (see FrameTimestampMapper); 0 disables snapping. Separate
+   * from [forceFpsLimit], which a bitrate ladder lowers to a divisor of this rate.
+   */
+  fun setSourceFrameRate(fps: Int) {
+    val e = executor
+    if (e != null) e.submit { frameTimestampMapper.setFrameRate(fps) } else frameTimestampMapper.setFrameRate(fps)
   }
 
   override fun setIsStreamHorizontalFlip(flip: Boolean) {

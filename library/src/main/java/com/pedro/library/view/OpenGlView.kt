@@ -145,6 +145,8 @@ open class OpenGlView : SurfaceView, GlInterface, OnFrameAvailableListener, Surf
 
     override fun forceFpsLimit(fps: Int) {
         fpsLimiter.setFPS(fps)
+        // TVC fork: the prepared rate is also the CFR grid for frame PTS (FrameTimestampMapper).
+        frameTimestampMapper.setFrameRate(fps)
     }
 
     fun setAspectRatioMode(aspectRatioMode: AspectRatioMode) {
@@ -248,6 +250,7 @@ open class OpenGlView : SurfaceView, GlInterface, OnFrameAvailableListener, Surf
         val timestamp = frameTimestampMapper.map(
             if (mainRender.isReady()) mainRender.getSurfaceTexture().timestamp else 0L,
             TimeUtils.getCurrentTimeNano())
+        frameTimestampMapper.pollStats(TimeUtils.getCurrentTimeNano())?.let { android.util.Log.i("FrameTimestampMapper", it) }
 
         if (surfaceManagerEncoder.isReady || surfaceManagerEncoderRecord.isReady || surfaceManagerPhoto.isReady) {
             mainRender.drawFilters(false)
