@@ -36,7 +36,7 @@ package com.pedro.encoder.input.gl
  *  - A source without a timestamp (0), a repeated frame (forced redraw with nothing new latched) or a
  *    source that jumps (switch, loop, pause) falls back to the steady clock: `now` — and a jump
  *    re-anchors the mapping.
- *  - Constant-frame-rate grid (tvcsrt9, once [setFrameRate] is given the nominal rate): even honest
+ *  - [[gotcha:cfr-pts-grid]] Constant-frame-rate grid (tvcsrt9, once [setFrameRate] is given the nominal rate): even honest
  *    sensor timestamps wobble (AE, HAL scheduling), and on 2026-10-20 a phone still made MediaMTX flip
  *    200 ms LL-HLS parts between 7 and 8 frames. So each source-mapped time is snapped to the nearest
  *    slot of a nominal grid at least one slot past the previous output: jitter disappears, a dropped
