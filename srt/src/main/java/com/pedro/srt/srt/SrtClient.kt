@@ -105,7 +105,7 @@ class SrtClient(private val connectChecker: ConnectChecker) {
     private set
   var packetsLost = 0
     private set
-  // TVC fork [[contract:srt-link-stats]]: the receiver's own view, from full ACKs.
+  // TVC fork [[mobile_streaming/contract:srt-link-stats]]: the receiver's own view, from full ACKs.
   @Volatile private var peerReceiveRateBps = 0L
   @Volatile private var peerPacketRate = 0
   @Volatile private var peerLinkCapacity = 0
@@ -454,7 +454,7 @@ class SrtClient(private val connectChecker: ConnectChecker) {
   }
 
   @Throws(IllegalArgumentException::class)
-  /** TVC fork [[contract:srt-link-stats]] — see [SrtLinkStats]. */
+  /** TVC fork [[mobile_streaming/contract:srt-link-stats]] — see [SrtLinkStats]. */
   fun getLinkStats(): SrtLinkStats = SrtLinkStats(
     rttUs = rtt,
     packetsSent = commandsManager.packetsSent,

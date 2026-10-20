@@ -30,6 +30,7 @@ import com.pedro.common.newSingleThreadExecutor
 import com.pedro.common.secureSubmit
 import com.pedro.encoder.input.gl.FilterAction
 import com.pedro.encoder.input.gl.SurfaceManager
+import com.pedro.encoder.input.gl.FrameTimestampMapper
 import com.pedro.encoder.input.gl.render.MainRender
 import com.pedro.encoder.input.gl.render.filters.BaseFilterRender
 import com.pedro.encoder.input.gl.render.filters.NoFilterRender
@@ -67,6 +68,8 @@ class GlStreamInterface(private val context: Context): OnFrameAvailableListener,
   private val surfaceManagerPreview = SurfaceManager()
   private val multiPreviewSurfaceManagers = ConcurrentHashMap<Surface, PreviewSurfaceInfo>()
   private val mainRender = MainRender()
+  // Encoder PTS from the source frame's own time, not the GL draw time [[gotcha:gl-draw-time-pts]]
+  private val frameTimestampMapper = FrameTimestampMapper()
 
   private var encoderWidth = 0
   private var encoderHeight = 0
@@ -225,6 +228,7 @@ class GlStreamInterface(private val context: Context): OnFrameAvailableListener,
     executor?.secureSubmit {
       surfaceManager.makeCurrent()
       mainRender.initGl(context, width, height, width, height)
+      frameTimestampMapper.reset()
       running.set(true)
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
         val surfaceHandler = surfaceHandlerThread?.looper?.let { Handler(it) }
@@ -295,7 +299,9 @@ class GlStreamInterface(private val context: Context): OnFrameAvailableListener,
       mainRender.drawSource()
       surfaceManager.swapBuffer()
     }
-    val timestamp = TimeUtils.getCurrentTimeNano()
+    val timestamp = frameTimestampMapper.map(
+      if (mainRender.isReady()) mainRender.getSurfaceTexture().timestamp else 0L,
+      TimeUtils.getCurrentTimeNano())
 
     val orientation = when (orientationForced) {
       OrientationForced.PORTRAIT -> true

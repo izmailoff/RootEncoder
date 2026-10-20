@@ -174,6 +174,6 @@ class SrtStreamClient(
    */
   fun getPacketsLost() = srtClient.packetsLost
 
-  /** TVC fork [[contract:srt-link-stats]]: the receiver's view of the link (RTT, loss, receive rate). */
+  /** TVC fork [[mobile_streaming/contract:srt-link-stats]]: the receiver's view of the link (RTT, loss, receive rate). */
   fun getLinkStats(): com.pedro.srt.srt.SrtLinkStats = srtClient.getLinkStats()
 }

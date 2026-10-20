@@ -32,6 +32,7 @@ import com.pedro.common.newSingleThreadExecutor
 import com.pedro.common.secureSubmit
 import com.pedro.encoder.input.gl.FilterAction
 import com.pedro.encoder.input.gl.SurfaceManager
+import com.pedro.encoder.input.gl.FrameTimestampMapper
 import com.pedro.encoder.input.gl.render.MainRender
 import com.pedro.encoder.input.gl.render.filters.BaseFilterRender
 import com.pedro.encoder.input.gl.render.filters.NoFilterRender
@@ -53,6 +54,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 open class OpenGlView : SurfaceView, GlInterface, OnFrameAvailableListener, SurfaceHolder.Callback {
     private val running = AtomicBoolean(false)
     private val mainRender = MainRender()
+    // Encoder PTS from the source frame's own time, not the GL draw time [[gotcha:gl-draw-time-pts]]
+    private val frameTimestampMapper = FrameTimestampMapper()
     private val surfaceManagerPhoto = SurfaceManager()
     private val surfaceManager = SurfaceManager()
     private val surfaceManagerEncoder = SurfaceManager()
@@ -242,7 +245,9 @@ open class OpenGlView : SurfaceView, GlInterface, OnFrameAvailableListener, Surf
             }
             surfaceManager.swapBuffer()
         }
-        val timestamp = TimeUtils.getCurrentTimeNano()
+        val timestamp = frameTimestampMapper.map(
+            if (mainRender.isReady()) mainRender.getSurfaceTexture().timestamp else 0L,
+            TimeUtils.getCurrentTimeNano())
 
         if (surfaceManagerEncoder.isReady || surfaceManagerEncoderRecord.isReady || surfaceManagerPhoto.isReady) {
             mainRender.drawFilters(false)
@@ -324,6 +329,7 @@ open class OpenGlView : SurfaceView, GlInterface, OnFrameAvailableListener, Surf
             surfaceManagerPhoto.eglSetup(encoderWidth, encoderHeight, surfaceManager)
             surfaceManager.makeCurrent()
             mainRender.initGl(context, encoderWidth, encoderHeight, encoderWidth, encoderHeight)
+            frameTimestampMapper.reset()
             running.set(true)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
               val surfaceHandler = surfaceHandlerThread?.looper?.let { Handler(it) }

@@ -232,7 +232,7 @@ class GenericStreamClient(
   }
 
   /**
-   * TVC fork [[contract:srt-link-stats]]: the receiver's view of the link while publishing SRT,
+   * TVC fork [[mobile_streaming/contract:srt-link-stats]]: the receiver's view of the link while publishing SRT,
    * null on any other protocol.
    */
   fun getSrtLinkStats(): com.pedro.srt.srt.SrtLinkStats? =

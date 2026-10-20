@@ -17,7 +17,7 @@
 package com.pedro.srt.srt
 
 /**
- * TVC fork [[contract:srt-link-stats]]: what the RECEIVER says about the link, as one snapshot.
+ * TVC fork [[mobile_streaming/contract:srt-link-stats]]: what the RECEIVER says about the link, as one snapshot.
  *
  * The sender's own queue only fills when the socket itself is back-pressured. When the bottleneck
  * is further along (a cell tower, a policing router) UDP writes never block, the queue stays empty

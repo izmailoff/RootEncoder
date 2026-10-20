@@ -63,7 +63,7 @@ class CommandsManager {
   private var encryptor: EncryptionUtil? = null
   var videoCodec = VideoCodec.H264
   var audioCodec = AudioCodec.AAC
-  /** TVC fork [[contract:srt-link-stats]]: unique data packets written / packets re-sent for a NAK. */
+  /** TVC fork [[mobile_streaming/contract:srt-link-stats]]: unique data packets written / packets re-sent for a NAK. */
   @Volatile var packetsSent = 0L
     private set
   @Volatile var packetsRetransmitted = 0L
@@ -156,7 +156,7 @@ class CommandsManager {
   }
 
   /**
-   * TVC fork [[contract:srt-link-stats]]: a packet already RE-sent within [minIntervalUs] is NOT
+   * TVC fork [[mobile_streaming/contract:srt-link-stats]]: a packet already RE-sent within [minIntervalUs] is NOT
    * sent again (the first retransmission always goes: the NAK that asks for it arrives about one RTT
    * after the original send, which a plain interval would have swallowed). Receivers repeat their loss list in periodic NAKs (every ~RTT/2 or 20 ms), and the
    * stock loop answered every repeat with another copy — under congestion that multiplied the load on
