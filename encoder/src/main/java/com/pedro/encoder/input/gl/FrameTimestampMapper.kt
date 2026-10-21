@@ -45,6 +45,12 @@ package com.pedro.encoder.input.gl
  *    so audio stays in sync. A frame further
  *    off than that re-bases the grid on its real time. A persistent offset (source clock rate a few
  *    hundred ppm off nominal) is slewed out slowly ([maxSlewNs] per frame) once it exceeds 1/20 frame.
+ *  - [[gotcha:cfr-gap-fill]] (tvcsrt10) A frame that skips slots (the camera dropped one, ~1 in 250 on an
+ *    SM-A528B) leaves a 2-slot sample in the stream. MediaMTX's LL-HLS muxer derives its part length from the
+ *    sample durations it sees and publishes the LONGEST part as PART-TARGET, so one gap still flipped it
+ *    234↔267 ms and Safari stopped (2026-10-21, build 424). After [map], [missedSlots] says how many slots
+ *    (at most [maxFill]) were skipped and [missedSlot] gives each one's time: the caller presents the frame
+ *    once per missed slot first, so the encoder sees one frame per slot with no holes.
  *  - Output is strictly increasing.
  *
  * Not thread-safe; call from the GL thread only. Pure JVM so it is unit-testable.
@@ -55,7 +61,17 @@ class FrameTimestampMapper(
   private val snapTolerance: Double = 0.5,
   private val earlyTolerance: Double = 0.9,
   private val maxSlewNs: Long = 20_000L,
+  private val maxFill: Int = 3,
 ) {
+  private val missed = LongArray(maxFill)
+
+  /** Slots skipped just before the last [map] output (0 = none), to be filled by re-presenting the frame. */
+  var missedSlots = 0
+    private set
+
+  /** Presentation time of missed slot [i] (0 until [missedSlots]), oldest first. */
+  fun missedSlot(i: Int): Long = missed[i]
+
   private var offsetNs = 0L
   private var anchored = false
   private var framesSinceAnchor = 0
@@ -130,6 +146,7 @@ class FrameTimestampMapper(
   fun map(sourceNs: Long, nowNs: Long): Long {
     var out: Long
     lastSnapped = false
+    missedSlots = 0
     if (sourceNs == 0L || (anchored && sourceNs == lastSourceNs)) {
       // No source time, or the same frame drawn again: steady clock.
       out = nowNs
@@ -157,6 +174,7 @@ class FrameTimestampMapper(
       out = lastOutNs + 1_000L
       lastSnapped = false
       gridActive = false
+      missedSlots = 0
     }
     if (lastOutNs != Long.MIN_VALUE) {
       val d = out - lastOutNs
@@ -180,6 +198,11 @@ class FrameTimestampMapper(
     if (err > snapTolerance * periodNs || -err > earlyTolerance * periodNs) {
       rebases++
       return rebase(raw)
+    }
+    // A gap of whole slots (no re-base): remember the empty ones so the caller can fill them.
+    if (steps in 2..(maxFill + 1).toLong()) {
+      for (k in 1 until steps) missed[(k - 1).toInt()] = slot(gridIndex + k)
+      missedSlots = (steps - 1).toInt()
     }
     gridIndex = index
     // Slow drift correction: only a sustained offset (> 1/20 frame on average, until < 1/100) moves the grid, and by

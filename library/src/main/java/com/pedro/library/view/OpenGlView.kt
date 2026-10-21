@@ -259,6 +259,12 @@ open class OpenGlView : SurfaceView, GlInterface, OnFrameAvailableListener, Surf
             val w = if (muteVideo) 0 else encoderWidth
             val h = if (muteVideo) 0 else encoderHeight
             if (surfaceManagerEncoder.makeCurrent()) {
+                // [[gotcha:cfr-gap-fill]] one frame per slot: a slot the camera skipped gets this frame too
+                for (i in 0 until frameTimestampMapper.missedSlots) {
+                    mainRender.drawScreen(w, h, aspectRatioMode, streamRotation, isStreamVerticalFlip, isStreamHorizontalFlip, null)
+                    surfaceManagerEncoder.setPresentationTime(frameTimestampMapper.missedSlot(i))
+                    surfaceManagerEncoder.swapBuffer()
+                }
                 mainRender.drawScreen(
                     w, h, aspectRatioMode,
                     streamRotation, isStreamVerticalFlip, isStreamHorizontalFlip, null
@@ -272,6 +278,11 @@ open class OpenGlView : SurfaceView, GlInterface, OnFrameAvailableListener, Surf
             val w = if (muteVideo) 0 else encoderRecordWidth
             val h = if (muteVideo) 0 else encoderRecordHeight
             if (surfaceManagerEncoderRecord.makeCurrent()) {
+                for (i in 0 until frameTimestampMapper.missedSlots) {
+                    mainRender.drawScreen(w, h, aspectRatioMode, streamRotation, isStreamVerticalFlip, isStreamHorizontalFlip, null)
+                    surfaceManagerEncoderRecord.setPresentationTime(frameTimestampMapper.missedSlot(i))
+                    surfaceManagerEncoderRecord.swapBuffer()
+                }
                 mainRender.drawScreen(w, h, aspectRatioMode, streamRotation, isStreamVerticalFlip, isStreamHorizontalFlip, null)
                 surfaceManagerEncoderRecord.setPresentationTime(timestamp)
                 surfaceManagerEncoderRecord.swapBuffer()

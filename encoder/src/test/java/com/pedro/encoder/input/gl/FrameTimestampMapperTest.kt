@@ -72,4 +72,36 @@ class FrameTimestampMapperTest {
     // after the jump the output tracks the clock again
     assertTrue(kotlin.math.abs(prev - now) < 1_000_000_000L)
   }
+
+  @Test
+  fun `a dropped frame reports the empty slot so the stream stays one frame per slot`() {
+    // [[gotcha:cfr-gap-fill]]
+    val m = FrameTimestampMapper(settleFrames = 0)
+    m.setFrameRate(30)
+    val out = mutableListOf<Long>()
+    var now = 10_000_000_000L
+    for (i in 0 until 40) {
+      if (i == 20 || i == 31 || i == 32) continue          // the camera skipped these
+      val cam = 5_000_000_000L + i * frameNs + jitter[i % jitter.size] / 4
+      now = cam + 5_000_000_000L
+      val t = m.map(cam, now)
+      for (k in 0 until m.missedSlots) out.add(m.missedSlot(k))
+      out.add(t)
+    }
+    assertEquals(40, out.size)
+    for (k in 1 until out.size) {
+      val d = out[k] - out[k - 1]
+      assertTrue("delta $d at $k", kotlin.math.abs(d - frameNs) <= 50_000L)
+    }
+  }
+
+  @Test
+  fun `no gap means nothing to fill`() {
+    val m = FrameTimestampMapper(settleFrames = 0)
+    m.setFrameRate(30)
+    for (i in 0 until 20) {
+      m.map(5_000_000_000L + i * frameNs, 10_000_000_000L + i * frameNs)
+      assertEquals(0, m.missedSlots)
+    }
+  }
 }

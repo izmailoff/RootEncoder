@@ -322,6 +322,13 @@ class GlStreamInterface(private val context: Context): OnFrameAvailableListener,
       val w = if (muteVideo) 0 else encoderWidth
       val h = if (muteVideo) 0 else encoderHeight
       if (surfaceManagerEncoder.makeCurrent()) {
+        // [[gotcha:cfr-gap-fill]] one frame per slot: a slot the camera skipped gets this frame too
+        for (i in 0 until frameTimestampMapper.missedSlots) {
+          mainRender.drawScreenEncoder(w, h, orientation, streamOrientation,
+            isStreamVerticalFlip, isStreamHorizontalFlip, streamViewPort)
+          surfaceManagerEncoder.setPresentationTime(frameTimestampMapper.missedSlot(i))
+          surfaceManagerEncoder.swapBuffer()
+        }
         mainRender.drawScreenEncoder(w, h, orientation, streamOrientation,
           isStreamVerticalFlip, isStreamHorizontalFlip, streamViewPort)
         surfaceManagerEncoder.setPresentationTime(timestamp)
@@ -333,6 +340,12 @@ class GlStreamInterface(private val context: Context): OnFrameAvailableListener,
       val w = if (muteVideo) 0 else encoderRecordWidth
       val h = if (muteVideo) 0 else encoderRecordHeight
       if (surfaceManagerEncoderRecord.makeCurrent()) {
+        for (i in 0 until frameTimestampMapper.missedSlots) {
+          mainRender.drawScreenEncoder(w, h, orientation, streamOrientation,
+            isStreamVerticalFlip, isStreamHorizontalFlip, streamViewPort)
+          surfaceManagerEncoderRecord.setPresentationTime(frameTimestampMapper.missedSlot(i))
+          surfaceManagerEncoderRecord.swapBuffer()
+        }
         mainRender.drawScreenEncoder(w, h, orientation, streamOrientation,
           isStreamVerticalFlip, isStreamHorizontalFlip, streamViewPort)
         // Fix: same timestamp fix for the dedicated record surface
